@@ -1,0 +1,383 @@
+<!-- 
+    Marcel Timm, RhinoDevel, 2023jan01.
+
+    * Based on source code from Sven Reifegerste, see:
+    
+      http://www.zorc.breitbandkatze.de/crc.html
+-->
+
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="author" content="Marcel Timm, RhinoDevel" />
+        <title>CRC-16 Calculator</title>
+        <script>
+
+<!--
+
+// *****************************************************************************
+// *** FUNCTIONS NECESSARY TO CALCULATE CRC VALUE FOR INPUT DATA BYTES:      ***
+// *****************************************************************************
+
+function getReversedByte(byte)
+{
+    var retVal = byte;
+
+    retVal = ((retVal & 0xAA) >> 1) | ((retVal & 0x55) << 1);
+    retVal = ((retVal & 0xCC) >> 2) | ((retVal & 0x33) << 2);
+    retVal = (retVal >> 4) | (retVal << 4);
+
+    retVal &= 0xFF; // Not necessary in C, if 8-bit type is used.
+                    // Necessary here, because of last left shift by four bits.
+
+    return retVal;
+}
+
+function getReversedWord(word)
+{
+    return (getReversedByte(word & 0x00FF) << 8) // Rev. low byte & use as h. b.
+        | getReversedByte(word >> 8); // Reverse high byte and use as low byte.
+}
+
+/**
+ * - p = {
+ *       polynomial: 0x1021,
+ *       initVal: 0xFFFF, // Initial value.
+ *       finalXor: 0xFFFF, // Final XOR value.
+ *       reverseIn: true, // Reverse input data bytes.
+ *       reverseOut: true // Reverse CRC before (final) XOR.
+ *   }
+ */
+function getCrc16ForBytes(p, bytes)
+{
+    var retVal = p.initVal;
+
+    bytes.forEach(
+        function(curByte)
+        {
+            var b = curByte, j = 8, doCalc = false;
+
+            if(p.reverseIn) // Reverse in.
+            {
+                b = getReversedByte(b);
+            }
+
+            do
+            { 
+                doCalc = (retVal & 0x8000) !== 0; // Is CRC's highest bit set?
+                if((b & 0x80) !== 0) // Is cur. data byte's highest bit set?
+                {
+                    doCalc = !doCalc;
+                }
+                //
+                // => Calculate, if either the CRC's OR the current data
+                //    byte's highest bit is set (but not, if both are set).
+
+                retVal <<= 1; // Left shift CRC word.
+                retVal &= 0xFFFF; // Should not be necessary in C.
+
+                if(doCalc)
+                {
+                    retVal ^= p.polynomial;
+                }
+
+                b <<= 1; // Left shifts current byte.
+            }while(--j !== 0);
+        });
+
+    if(p.reverseOut) // Reverse out.
+    {
+        retVal = getReversedWord(retVal);
+    }
+
+    retVal ^= p.finalXor; // (Final) XOR.
+
+    return retVal;
+}
+
+// *****************************************************************************
+// *** FUNCTIONS NECESSARY TO INTERACT WITH THE USER VIA BROWSER/WEBSITE:    ***
+// *****************************************************************************
+
+function getBytesFromStr(str)
+{
+    var i = -1, retVal = [];
+
+    while(++i < str.length)
+    {
+        retVal.push(str.charCodeAt(i));
+    }
+    return retVal;
+}
+
+/**
+ * - Returns an empty array on error.
+ */
+function getBytesFromBytesStr(bytesStr)
+{
+    var bytes = [], i = 0, curByte;
+
+    while(i < bytesStr.length)
+    {
+        curByte = parseInt(bytesStr.slice(i, i + 2), 16);
+        if(isNaN(curByte))
+        {
+            return [];
+        }
+
+        bytes.push(curByte);
+        i += 2;
+    }
+    return bytes;
+}
+
+function getBytesStr(bytes)
+{
+    var retVal = '', i = -1;
+
+    while(++i < bytes.length)
+    {
+        retVal += bytes[i].toString(16).padStart(2, '0').toUpperCase();
+    }
+    return retVal;
+}
+
+function printToDoc(crcWord, bytes)
+{
+    document.body.querySelector('#bytesstr').value = getBytesStr(bytes);
+
+    document.body.querySelector('#bytecnt').textContent = String(bytes.length);
+    
+    document.body.querySelector('#crc16').textContent = bytes.length === 0
+        ? '' : crcWord.toString(16).padStart(4, '0').toUpperCase();
+}
+
+/**
+ * - Returns null on error.
+ */
+function getWordFromStr(str)
+{
+    var n = parseInt(str, 16);
+
+    if(isNaN(n))
+    {
+        return null;
+    }
+    if(n < 0 )
+    {
+        return null;
+    }
+    if(n > 0xFFFF)
+    {
+        return null;
+    }
+    return n;
+}
+
+function setErrIndication(ele, errOcc)
+{
+    if(errOcc)
+    {
+        ele.style['background-color'] = 'red';
+        ele.style['color'] = 'white';
+    }
+    else
+    {
+        ele.style['background-color'] = ''; // Kind of hard-coded.
+        ele.style['color'] = ''; // Kind of hard-coded.
+    }
+}
+
+/**
+ * - Returns null on error.
+ */
+function getParamsFromDoc()
+{
+    var polynomialEle = document.body.querySelector('#polynomial'),
+        initValEle = document.body.querySelector('#initval'),
+        finalXorEle = document.body.querySelector('#finalxor'),
+        errOcc = false,
+        p = {
+                polynomial: getWordFromStr(polynomialEle.value),
+                initVal: getWordFromStr(initValEle.value),
+                finalXor: getWordFromStr(finalXorEle.value),
+                reverseIn: document.body.querySelector('#reversein').checked,
+                reverseOut: document.body.querySelector('#reverseout').checked
+            };
+
+    if(p.polynomial === null 
+        || p.polynomial === 0) // A polynomial of zero makes no sense.
+    {
+        setErrIndication(polynomialEle, true);
+        errOcc = true;
+    }
+    else
+    {
+        setErrIndication(polynomialEle, false);
+    }
+    if(p.initVal === null)
+    {
+        setErrIndication(initValEle, true);
+        errOcc = true;
+    }
+    else
+    {
+        setErrIndication(initValEle, false);
+    }
+    if(p.finalXor === null)
+    {
+        setErrIndication(finalXorEle, true);
+        errOcc = true;
+    }
+    else
+    {
+        setErrIndication(finalXorEle, false);
+    }
+
+    if(errOcc)
+    {
+        return null;
+    }
+    return p;
+}
+
+function calcFromDocAndBytesToDoc(bytes)
+{
+    var p = getParamsFromDoc();
+
+    if(p === null)
+    {
+        printToDoc(0, []); // Kind of hard-coded.
+        return;
+    }
+    printToDoc(getCrc16ForBytes(p, bytes), bytes);
+}
+
+function calcFromDocAsciiToDoc()
+{
+    var asciiEle = document.body.querySelector('#ascii');
+
+    asciiEle.style.color = 'black'; // Also see calcFromBytesToDoc().
+
+    calcFromDocAndBytesToDoc(getBytesFromStr(asciiEle.value));
+}
+
+function calcFromDocBytesToDoc()
+{
+    document.body.querySelector('#ascii').style.color = 'gray';
+    //
+    // Also see calcFromDocBytesToDoc().
+
+    calcFromDocAndBytesToDoc(
+        getBytesFromBytesStr(document.body.querySelector('#bytesstr').value));
+}
+
+//-->
+
+        </script>
+    </head>
+    <body>
+        <div style="display: flex; flex-direction: column; align-items: center;">
+            <div>
+                CRC-16 Calculator
+            </div>
+            <div>
+                <span style="font-weight: bold;">Initial value (hex.):</span>
+                &nbsp;
+                <!-- Hard-coded value, below: -->
+                <input 
+                    id="initval"
+                    value="FFFF"
+                    minlength="4"
+                    maxlength="4"
+                    style="width: 3em; width: 5ch; text-align: right;"
+                >
+            </div>
+            <div>
+                <span style="font-weight: bold;">Reverse data bytes:</span>
+                &nbsp;
+                <!-- Hard-coded value, below: -->
+                <input id="reversein" type="checkbox" checked="checked">
+            </div>
+            <div>
+                <span style="font-weight: bold;">Polynomial (hex.):</span>
+                &nbsp;
+                <!-- Hard-coded value, below: -->
+                <input 
+                    id="polynomial"
+                    value="1021"
+                    minlength="4"
+                    maxlength="4"
+                    style="width: 3em; width: 5ch; text-align: right;"
+                >
+            </div>
+            <div>
+                <span style="font-weight: bold;">Reverse before XOR:</span>
+                &nbsp;
+                <!-- Hard-coded value, below: -->
+                <input id="reverseout" type="checkbox" checked="checked">
+            </div>
+            <div>
+                <span style="font-weight: bold;">Final XOR (hex.):</span>
+                &nbsp;
+                <!-- Hard-coded value, below: -->
+                <input 
+                    id="finalxor"
+                    value="FFFF"
+                    minlength="4"
+                    maxlength="4"
+                    style="width: 3em; width: 5ch; text-align: right;"
+                >
+            </div>
+            <div>
+                <div style="font-weight: bold;">ASCII:</div>
+                <!-- Hard-coded value, below: -->
+                <textarea id="ascii">89ABCDEF</textarea>
+            </div>
+            <input 
+                type="button"
+                value="Calc. from ASCII"
+                onclick="calcFromDocAsciiToDoc()"
+                style="width: fit-content;"
+            >
+            <div>
+                <div style="font-weight: bold;">Bytes (hex.):</div>
+                <textarea id="bytesstr"></textarea>
+            </div>
+            <input 
+                type="button"
+                value="Calc. from bytes"
+                onclick="calcFromDocBytesToDoc()"
+                style="width: fit-content;"
+            >
+            <div>
+                <!-- Hard-coded value, below: -->
+                <span style="font-weight: bold;">Input byte count:</span>
+                &nbsp;
+                <span id="bytecnt">0</span>
+            <div>
+                <span style="font-weight: bold;">CRC-16 (hex.):</span>
+                &nbsp;
+                <span id="crc16"></span>
+            </div>
+        </div>
+        <div>
+            <p>
+                This is a <a href="https://en.wikipedia.org/wiki/Cyclic_redundancy_check" target="_blank">CRC-16</a> generator preconfigured with input values to generate a <b>CRC-16-CCITT (X.25)</b> checksum the way it should be calculated by devices sending <a href="https://de.wikipedia.org/wiki/Smart_Message_Language" target="_blank">SML (Smart Message Language)</a> messages, e.g. so called smart meters (measuring the consumed energy and more) as the Iskra MT175 does.
+            </p>
+            <p>
+                It is based on source code from <a href="http://www.zorc.breitbandkatze.de/crc.html" target="_blank">Sven Reifegerste</a>.
+            </p>
+            <p>
+                Please take a look at the JavaScript source code, especially the (short) function <b>getCrc16ForBytes()</b> that does the calculation (almost everything else is code to make the website work).
+            </p>
+            <p>
+                You can also find this website's sources and more at my <a href="https://github.com/RhinoDevel" target="_blank">GitHub page</a>.
+            </p>
+            <p>
+                <i>2023, Marcel Timm (RhinoDevel)</i>.
+            </p>
+        </div>
+    </body>
+</html>
